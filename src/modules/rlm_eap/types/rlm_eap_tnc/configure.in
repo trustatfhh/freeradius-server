@@ -2,12 +2,21 @@ AC_INIT(rlm_eap_tnc.c)
 AC_REVISION($Revision$)
 AC_DEFUN(modname,[rlm_eap_tnc])
 
+eap_tnc_cflags=
+eap_tnc_ldflags=-lnaaeap
+
 if test x$with_[]modname != xno; then
 
-	AC_CHECK_LIB(TNCS, exchangeTNCCSMessages)
-	if test "x$ac_cv_lib_tncs_exchangetnccsmessages" != xyes; then
-		AC_MSG_WARN([the TNCS library isn't found!])
-		fail="$fail -lTNCS"
+	AC_CHECK_LIB(naaeap,processEAPTNCData,,fail="$fail -lnaaeap",)
+	if test -x"$ac_cv_lib_NAAEAP_processEAPTNCData" == -x"no"; then
+		AC_MSG_WARN([the NAAEAP library was not found!])
+		fail="$fail -lNAAEAP"
+	fi
+	
+	AC_CHECK_HEADERS(naaeap/naaeap.h,,fail="$fail -Inaaeap.h",)
+	if test -x"$ac_cv_header_naaeap_h" == -x"no"; then
+		AC_MSG_WARN([the naaeap header was not found!])
+		fail="$fail -Inaaeap.h"
 	fi
 
 	targetname=modname
