@@ -1,0 +1,18 @@
+# -*- text -*-
+# tnc@fhh dictionary
+#
+# http://trust.inform.fh-hannover.de
+#
+# Version: 0.8.4	Bastian Hellmann	trust@f4-i.fh-hannover.de
+#
+
+VENDOR tncfhh			10000
+BEGIN-VENDOR tncfhh
+
+ATTRIBUTE	TNC-Status	1	integer
+
+VALUE	TNC-Status	Access	0 
+VALUE	TNC-Status	Isolate	1
+VALUE	TNC-Status	None	2
+
+END-VENDOR tncfhh
