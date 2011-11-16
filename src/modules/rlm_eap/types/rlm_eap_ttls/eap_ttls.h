@@ -37,6 +37,10 @@ typedef struct ttls_tunnel_t {
 	int		copy_request_to_tunnel;
 	int		use_tunneled_reply;
 	const char	*virtual_server;
+	const char	*tnc_virtual_server;	// virtual server for EAP-TNC as the second inner method
+	VALUE_PAIR	*auth_reply;		// cache storage of the last reply of the first inner method
+	int		auth_code;		// cache storage of the reply-code of the first inner method
+	int		doing_tnc;		// status if we're doing EAP-TNC
 } ttls_tunnel_t;
 
 /*

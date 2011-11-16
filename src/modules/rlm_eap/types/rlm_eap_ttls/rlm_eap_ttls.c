@@ -62,6 +62,11 @@ typedef struct rlm_eap_ttls_t {
 	 *	Virtual server for inner tunnel session.
 	 */
 	char	*virtual_server;
+
+	/*
+	 *	Virtual server for the second inner tunnel method, which is EAP-TNC.
+	 */
+	char	*tnc_virtual_server;
 } rlm_eap_ttls_t;
 
 
@@ -77,6 +82,9 @@ static CONF_PARSER module_config[] = {
 
 	{ "virtual_server", PW_TYPE_STRING_PTR,
 	  offsetof(rlm_eap_ttls_t, virtual_server), NULL, NULL },
+
+	{ "tnc_virtual_server", PW_TYPE_STRING_PTR,
+	  offsetof(rlm_eap_ttls_t, tnc_virtual_server), NULL, NULL },
 
 	{ "include_length", PW_TYPE_BOOLEAN,
 	  offsetof(rlm_eap_ttls_t, include_length), NULL, "yes" },
@@ -171,6 +179,10 @@ static ttls_tunnel_t *ttls_alloc(rlm_eap_ttls_t *inst)
 	t->copy_request_to_tunnel = inst->copy_request_to_tunnel;
 	t->use_tunneled_reply = inst->use_tunneled_reply;
 	t->virtual_server = inst->virtual_server;
+	t->tnc_virtual_server = inst->tnc_virtual_server;	// virtual server for EAP-TNC as the second inner method
+	t->auth_reply = NULL;								// cache storage of the last reply of the first inner method
+	t->auth_code = -1;									// cache storage of the reply-code of the first inner method
+	t->doing_tnc = 0;									// status if we're doing EAP-TNC (on start we're doing NOT)
 	return t;
 }
 

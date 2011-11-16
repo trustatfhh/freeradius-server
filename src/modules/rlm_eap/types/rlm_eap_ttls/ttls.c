@@ -631,6 +631,94 @@ static int vp2diameter(REQUEST *request, tls_session_t *tls_session, VALUE_PAIR 
 }
 
 /*
+ *	Start EAP-TNC as a second inner method.
+ *	Creates a new fake-request out of the original incoming request (via EAP_HANDLER).
+ *	If it's the first time, we create a EAP-START-packet and send
+ *	EAP-START :=	code = PW_EAP_REQUEST
+ *
+ */
+static REQUEST* start_tnc(EAP_HANDLER *handler, ttls_tunnel_t *t) {
+	REQUEST* request = handler->request;
+	RDEBUG2("EAP-TNC as second inner authentication method starts now");
+
+	/*
+	 *	Allocate a fake REQUEST struct,
+	 *	to make a new request, based on the original request.
+	 */
+	REQUEST* fake = request_alloc_fake(request);
+
+	/*
+	 * Set the virtual server to that of EAP-TNC.
+	 */
+	fake->server = t->tnc_virtual_server;
+
+	/*
+	 * Build a new EAP-Message.
+	 */
+	VALUE_PAIR *eap_msg;
+	eap_msg = paircreate(PW_EAP_MESSAGE, 0, PW_TYPE_OCTETS);
+
+	/*
+	 * Set the EAP-Message to look like EAP-Start
+	 */
+	eap_msg->vp_octets[0] = PW_EAP_RESPONSE;
+	eap_msg->vp_octets[1] = 0x00;
+
+	/*
+	 * Only setting EAP-TNC here,
+	 * because it is intended to do user-authentication in the first inner method,
+	 * and then a hardware-authentication (like EAP-TNC) as the second method.
+	 */
+	eap_msg->vp_octets[4] = PW_EAP_TNC;
+
+	eap_msg->length = 0;
+
+	/*
+	 * Add the EAP-Message to the request.
+	 */
+	pairadd(&(fake->packet->vps), eap_msg);
+
+	/*
+	 * Process the new request by the virtual server configured for
+	 * EAP-TNC.
+	 */
+	rad_authenticate(fake);
+
+	/*
+	 * From now on we're doing EAP-TNC as the second inner authentication method.
+	 */
+	t->doing_tnc = TRUE;
+
+	return fake;
+}
+
+/*
+ * 	Stop EAP-TNC as a second inner method.
+ *	Copy the value pairs from the cached Access-Accept of the first inner method
+ *	to the Access-Accept/Reject package of EAP-TNC.
+ */
+static REQUEST* stop_tnc(REQUEST *request, ttls_tunnel_t *t) {
+	RDEBUG2("EAP-TNC as second inner authentication method stops now");
+
+	/*
+	 * Copy the value-pairs of the origina Access-Accept of the first
+	 * inner authentication method to the Access-Accept/Reject of the
+	 * second inner authentication method (EAP-TNC).
+	 */
+	if (request->reply->code == PW_AUTHENTICATION_ACK) {
+		pairadd(&(request->reply->vps), t->auth_reply);
+	} else if (request->reply->code == PW_AUTHENTICATION_REJECT) {
+		pairadd(&(request->reply->vps), t->auth_reply);
+	}
+
+	pairdelete(&(request->reply->vps), PW_MESSAGE_AUTHENTICATOR, 0);
+	pairdelete(&(request->reply->vps), PW_PROXY_STATE, 0);
+	pairdelete(&(request->reply->vps), PW_USER_NAME, 0);
+
+	return request;
+}
+
+/*
  *	Use a reply packet to determine what to do.
  */
 static int process_reply(EAP_HANDLER *handler, tls_session_t *tls_session,
@@ -1184,6 +1272,16 @@ int eapttls_process(EAP_HANDLER *handler, tls_session_t *tls_session)
 
 	} /* else fake->server == request->server */
 
+	/*
+	 * If we're doing EAP-TNC as a second method,
+	 * then set the server to that one.
+	 * Then, rad_authenticate will run EAP-TNC,
+	 * so that afterwards we have to look for the state of
+	 * EAP-TNC.
+	 */
+	if (t->doing_tnc) {
+		fake->server = t->tnc_virtual_server;
+	}
 
 	if ((debug_flag > 0) && fr_log_fp) {
 		RDEBUG("Sending tunneled request");
@@ -1296,6 +1394,53 @@ int eapttls_process(EAP_HANDLER *handler, tls_session_t *tls_session)
 		break;
 
 	default:
+		/*
+		 * If the result of the first method was an acknowledgment OR
+		 * if were already running EAP-TNC,
+		 * we're doing additional things before processing the reply.
+		 * Also the configuration for EAP-TTLS has to contain a virtual server
+		 * for EAP-TNC as the second method.
+		 */
+		if (t->tnc_virtual_server) {
+			/*
+			 * If the reply code of the first inner method is PW_AUTHENTICATION_ACK
+			 * which means that the method was successful,
+			 * and we're not doing EAP-TNC as the second method,
+			 * then we want to intercept the Access-Accept and start EAP-TNC as the second inner method.
+			 */
+			if (fake->reply->code == PW_AUTHENTICATION_ACK
+				 && t->doing_tnc == FALSE) {
+				RDEBUG2("Reply-Code of the first inner method was: %d (PW_AUTHENTICATION_ACK)", fake->reply->code);
+
+				/*
+				 * Save reply-value pairs and reply-code of the first method.
+				 */
+				t->auth_reply = fake->reply->vps;
+				fake->reply->vps = NULL;
+				t->auth_code = fake->reply->code;
+
+				/*
+				 * Create the start package for EAP-TNC.
+				 */
+				fake = start_tnc(handler, t);
+
+				/*
+				 * If we're doing EAP-TNC as the second inner method,
+				 * and the reply->code was PW_AUTHENTICATION_ACK or PW_AUTHENTICATION_REJECT,
+				 * then we stop EAP-TNC and create an combined Access-Accept or Access-Reject.
+				 */
+			} else if (t->doing_tnc == TRUE
+					&& (fake->reply->code == PW_AUTHENTICATION_ACK || fake->reply->code == PW_AUTHENTICATION_REJECT)) {
+
+				/*
+				 * Create the combined Access-Accept or -Reject.
+				 */
+				RDEBUG2("Reply-Code of EAP-TNC as the second inner method was: %d (%s)", fake->reply->code,
+						fake->reply->code == PW_AUTHENTICATION_ACK ? "PW_AUTHENTICATION_ACK" : "PW_AUTHENTICATION_REJECT");
+				fake = stop_tnc(fake, t);
+			}
+		}
+
 		/*
 		 *	Returns RLM_MODULE_FOO, and we want to return
 		 *	PW_FOO
